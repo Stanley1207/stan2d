@@ -1,0 +1,10 @@
+{
+  "name": "stan2d",
+  "version-string": "0.1.0",
+  "dependencies": [
+    "glm",
+    "nlohmann-json",
+    "gtest",
+    "sdl2"
+  ]
+}
