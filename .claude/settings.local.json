@@ -7,7 +7,8 @@
       "Bash(ctest --test-dir build --output-on-failure -R ShapeRegistry 2>&1)",
       "Bash(ctest --test-dir build --output-on-failure -R World 2>&1)",
       "Bash(ctest --test-dir build --output-on-failure -R Integrator 2>&1)",
-      "Bash(ctest --test-dir build --output-on-failure -R AABBTree 2>&1)"
+      "Bash(ctest --test-dir build --output-on-failure -R AABBTree 2>&1)",
+      "Bash(ctest --test-dir build --output-on-failure -R NarrowPhase 2>&1)"
     ]
   }
 }
