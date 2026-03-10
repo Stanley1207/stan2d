@@ -5,7 +5,8 @@
       "Bash(cmake -B build -S . -G Ninja -DCMAKE_TOOLCHAIN_FILE=$HOME/vcpkg/scripts/buildsystems/vcpkg.cmake 2>&1 | tail -3 && cmake --build build 2>&1)",
       "Bash(cmake --build build 2>&1 && ctest --test-dir build --output-on-failure 2>&1)",
       "Bash(ctest --test-dir build --output-on-failure -R ShapeRegistry 2>&1)",
-      "Bash(ctest --test-dir build --output-on-failure -R World 2>&1)"
+      "Bash(ctest --test-dir build --output-on-failure -R World 2>&1)",
+      "Bash(ctest --test-dir build --output-on-failure -R Integrator 2>&1)"
     ]
   }
 }
