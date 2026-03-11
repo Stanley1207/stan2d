@@ -64,6 +64,8 @@ No Phase 1 files are modified except:
 struct JointHandle {
     uint32_t index;
     uint32_t generation;
+    bool operator==(const JointHandle&) const = default;
+    bool operator!=(const JointHandle&) const = default;
 };
 
 enum class JointType : uint8_t {
@@ -117,8 +119,9 @@ struct WorldConfig {
     uint32_t max_shapes      = 10000;
     uint32_t max_constraints = 5000;
     uint32_t max_contacts    = 20000;
-    uint32_t max_joints      = 2000;   // Phase 2
+    uint32_t max_joints      = 2000;   // Phase 2 — new field
 };
+// All existing fields unchanged. Only max_joints is added.
 ```
 
 ---
@@ -137,14 +140,16 @@ struct JointStorage {
     std::vector<Vec2>      anchor_b;
 
     // Hinge: limits (optional, default disabled)
-    std::vector<bool>      limit_enabled;
+    // uint8_t instead of bool: avoids std::vector<bool> specialization,
+    // enables std::span and memcpy-safe binary snapshot serialization.
+    std::vector<uint8_t>   limit_enabled;   // 0 = disabled, 1 = enabled
     std::vector<float>     limit_min;
     std::vector<float>     limit_max;
     std::vector<float>     reference_angle;
     std::vector<float>     accumulated_limit_impulse;  // warm-start
 
     // Hinge/Motor (optional, default disabled)
-    std::vector<bool>      motor_enabled;
+    std::vector<uint8_t>   motor_enabled;   // 0 = disabled, 1 = enabled
     std::vector<float>     motor_target_speed;
     std::vector<float>     motor_max_torque;
     std::vector<float>     accumulated_motor_impulse;  // warm-start
@@ -166,6 +171,10 @@ struct JointStorage {
     // Common warm-start impulse (linear, all types except Spring)
     std::vector<float>     accumulated_impulse_x;
     std::vector<float>     accumulated_impulse_y;
+
+    // Per-frame observable constraint force magnitude (written each solve, read by JointStateView)
+    // Reset to 0 at the start of each solve() call. Not warm-started.
+    std::vector<float>     constraint_forces;
 
     uint32_t size = 0;
 };
@@ -226,8 +235,8 @@ Contact and joint constraints are solved in the **same iteration loop** for corr
 
 **Hinge:**
 - Linear impulse: eliminate relative velocity at anchor point (2D, x/y)
-- Limit impulse: when `angle < min` or `angle > max`, angular impulse, one-sided clamp (same as contact normal)
-- Motor impulse: `target_speed - current_speed → angular impulse`, clamped by `max_torque * dt`, two-sided
+- Limit impulse: when `angle < min` or `angle > max`, angular impulse, one-sided clamp (same pattern as contact normal — clamp accumulated impulse, compute delta)
+- Motor impulse: `target_speed - current_speed → angular impulse`. Uses the **clamped-accumulation pattern** from Phase 1 `solve_constraints()`: clamp `accumulated_motor_impulse` to `[-motor_max_torque * dt, +motor_max_torque * dt]`, then `delta = new_accumulated - old_accumulated`, apply delta to both bodies. Two-sided clamp (motor can push or pull).
 
 **Distance:**
 - Impulse along anchor-to-anchor axis
@@ -235,8 +244,10 @@ Contact and joint constraints are solved in the **same iteration loop** for corr
 - Configurable one-sided (cable) or two-sided (rigid rod)
 
 **Spring:**
-- `F = -stiffness * (len - rest_len) - damping * v_rel`
-- Applied as `impulse = F * dt` each frame, **no warm-start** (soft constraint, recomputed each frame)
+- Constraint impulse along the current anchor-to-anchor axis, using effective mass (same computation as Distance joint):
+  `lambda = (-stiffness * (len - rest_len) - damping * v_rel_along_axis) * dt / effective_mass`
+- No clamping, no warm-start — soft constraint fully recomputed each frame.
+- **Do not** apply `F * dt` directly as a velocity change; always divide by effective mass to correctly account for the relative inertia of both connected bodies.
 
 **Pulley:**
 - Scalar constraint: `len_a + ratio * len_b = constant`
@@ -260,12 +271,17 @@ Contact and joint constraints are solved in the **same iteration loop** for corr
 ```cpp
 struct JointStateView {
     uint32_t active_joint_count = 0;
-    std::span<const uint8_t> types;             // JointType as uint8
-    std::span<const float>   angles;            // Hinge current angle (0 for others)
-    std::span<const float>   angular_speeds;    // Hinge current angular speed
-    std::span<const float>   motor_speeds;      // actual motor speed (0 if disabled)
-    std::span<const float>   constraint_forces; // constraint force magnitude per frame
-    std::span<const float>   lengths;           // current anchor distance
+    std::span<const uint8_t> types;              // JointType as uint8
+    std::span<const float>   angles;             // Hinge current angle (0 for non-Hinge)
+    std::span<const float>   angular_speeds;     // Hinge current angular speed (0 for non-Hinge)
+    // Target motor speed for joints with motor_enabled=1.
+    // NaN (std::numeric_limits<float>::quiet_NaN()) for joints without a motor (Spring, Distance, Pulley).
+    // RL agents should check the motor_enabled span to mask correctly.
+    std::span<const float>   motor_target_speeds;
+    std::span<const uint8_t> motor_enabled;      // mirrors JointStorage::motor_enabled
+    std::span<const float>   constraint_forces;  // backed by JointStorage::constraint_forces,
+                                                 // written each solve(), reset to 0 at frame start
+    std::span<const float>   lengths;            // current anchor-to-anchor distance
 };
 
 struct WorldStateView {
@@ -284,8 +300,15 @@ struct JointSnapshot {
     std::vector<uint32_t> generations;
     std::vector<uint32_t> free_list;
 
-    // Full SoA copy (all fields from JointStorage)
-    // ... mirrors JointStorage field-for-field ...
+    // Full SoA copy — every field from JointStorage, including:
+    // - All SoA parameter arrays (types, body_a/b, anchor_a/b, limits, motor params, spring/distance/pulley params)
+    // - All accumulated impulse fields (accumulated_impulse_x/y, accumulated_limit_impulse,
+    //   accumulated_motor_impulse) for warm-start completeness
+    // - All creation-time computed constants that must be restored verbatim:
+    //     reference_angle  — Hinge: computed at create_joint(), anchor for limit calculations
+    //     pulley_constant  — Pulley: len_a + ratio*len_b at creation time
+    //     distance_length  — Distance: target distance (may equal distance at creation if def.distance==0)
+    // (field list mirrors JointStorage exactly)
     uint32_t count = 0;
 };
 
@@ -295,7 +318,7 @@ struct WorldSnapshot {
 };
 ```
 
-**Key guarantee:** `restore_state()` fully restores SparseSet state + all warm-start accumulated impulses. Physics is bit-identical after restore — safe for MCTS rollback and episode reset.
+**Key guarantee:** `restore_state()` fully restores SparseSet state + all warm-start accumulated impulses + all creation-time computed constants (`reference_angle`, `pulley_constant`, `distance_length`). Physics is bit-identical after restore — safe for MCTS rollback and episode reset.
 
 ---
 
@@ -324,7 +347,10 @@ struct WorldSnapshot {
 
 ### Task 18 — Joint State System
 **Deliverables:** `JointStateView` + `WorldStateView::joints`, `JointSnapshot` + `WorldSnapshot::joints`, `save_state()` / `restore_state()` extension, `TrajectoryRecorder::capture()` extension, `export_state()` JSON/Binary extension (`joints` array).
-**Tests:** Save/restore full physics reproduction, warm-start state completeness, trajectory recording with joints, MCTS rollback scenario.
+
+**TrajectoryRecorder joint layout:** Mirrors the existing body trajectory layout. `TrajectoryRecorder` receives `max_joints` from `world.config().max_joints` at construction. Per-frame joint data is stored in a flat `max_frames * max_joints` stride (identical pattern to `all_positions_`). Fields recorded per frame per joint slot: `angles` (float), `angular_speeds` (float), `constraint_forces` (float), `lengths` (float). Frame active count uses `JointStateView::active_joint_count`. Inactive slots are zero-filled. This produces tensors of shape `[frames, max_joints, 4]` for direct ML consumption.
+
+**Tests:** Save/restore full physics reproduction, warm-start state completeness, trajectory recording with joints (tensor shape verification), MCTS rollback scenario.
 
 ### Task Dependency Graph
 
