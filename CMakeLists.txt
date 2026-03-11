@@ -61,7 +61,7 @@ file(GLOB_RECURSE TEST_SOURCES "tests/unit/*.cpp" "tests/integration/*.cpp")
 if(TEST_SOURCES)
     add_executable(stan2d_tests ${TEST_SOURCES})
     target_link_libraries(stan2d_tests
-        PRIVATE stan2d GTest::gtest GTest::gtest_main
+        PRIVATE stan2d GTest::gtest GTest::gtest_main nlohmann_json::nlohmann_json
     )
     include(GoogleTest)
     gtest_discover_tests(stan2d_tests)

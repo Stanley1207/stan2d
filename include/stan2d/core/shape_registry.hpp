@@ -63,6 +63,28 @@ public:
     [[nodiscard]] const std::vector<ShapeData>& shapes()     const { return shapes_; }
     [[nodiscard]] const std::vector<AABB>&      local_aabbs() const { return local_aabbs_; }
 
+    void save_state(std::vector<ShapeData>& out_shapes,
+                    std::vector<AABB>& out_aabbs,
+                    std::vector<uint32_t>& out_sparse,
+                    std::vector<uint32_t>& out_dense_to_sparse,
+                    std::vector<uint32_t>& out_generations,
+                    std::vector<uint32_t>& out_free_list) const {
+        out_shapes.assign(shapes_.begin(), shapes_.end());
+        out_aabbs.assign(local_aabbs_.begin(), local_aabbs_.end());
+        handles_.save_state(out_sparse, out_dense_to_sparse, out_generations, out_free_list);
+    }
+
+    void restore_state(const std::vector<ShapeData>& in_shapes,
+                       const std::vector<AABB>& in_aabbs,
+                       const std::vector<uint32_t>& in_sparse,
+                       const std::vector<uint32_t>& in_dense_to_sparse,
+                       const std::vector<uint32_t>& in_generations,
+                       const std::vector<uint32_t>& in_free_list) {
+        shapes_.assign(in_shapes.begin(), in_shapes.end());
+        local_aabbs_.assign(in_aabbs.begin(), in_aabbs.end());
+        handles_.restore_state(in_sparse, in_dense_to_sparse, in_generations, in_free_list);
+    }
+
 private:
     SparseSet              handles_;
     std::vector<ShapeData> shapes_;

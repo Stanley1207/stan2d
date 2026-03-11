@@ -96,6 +96,26 @@ public:
     [[nodiscard]] const std::vector<uint32_t>& generations()     const { return generations_; }
     [[nodiscard]] const std::vector<uint32_t>& free_list()       const { return free_list_; }
 
+    void save_state(std::vector<uint32_t>& out_sparse,
+                    std::vector<uint32_t>& out_dense_to_sparse,
+                    std::vector<uint32_t>& out_generations,
+                    std::vector<uint32_t>& out_free_list) const {
+        out_sparse.assign(sparse_.begin(), sparse_.end());
+        out_dense_to_sparse.assign(dense_to_sparse_.begin(), dense_to_sparse_.end());
+        out_generations.assign(generations_.begin(), generations_.end());
+        out_free_list.assign(free_list_.begin(), free_list_.end());
+    }
+
+    void restore_state(const std::vector<uint32_t>& in_sparse,
+                       const std::vector<uint32_t>& in_dense_to_sparse,
+                       const std::vector<uint32_t>& in_generations,
+                       const std::vector<uint32_t>& in_free_list) {
+        sparse_.assign(in_sparse.begin(), in_sparse.end());
+        dense_to_sparse_.assign(in_dense_to_sparse.begin(), in_dense_to_sparse.end());
+        generations_.assign(in_generations.begin(), in_generations.end());
+        free_list_.assign(in_free_list.begin(), in_free_list.end());
+    }
+
 private:
     std::vector<uint32_t> sparse_;          // sparse_index → dense_index
     std::vector<uint32_t> dense_to_sparse_; // dense_index  → sparse_index
