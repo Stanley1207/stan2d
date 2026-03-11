@@ -182,9 +182,9 @@ core → dynamics → collision → constraints → world
 | 7 | Dynamic AABB tree (broad phase) | ✅ |
 | 8 | SAT narrow phase | ✅ |
 | 9 | Sequential impulse solver | ✅ |
-| 10 | Wire `World::step()` full pipeline | 🔲 |
-| 11 | State view + snapshot system | 🔲 |
-| 12 | Trajectory recorder + state export | 🔲 |
+| 10 | Wire `World::step()` full pipeline | ✅ |
+| 11 | State view + snapshot system | ✅ |
+| 12 | Trajectory recorder + state export | ✅ |
 
 ---
 
