@@ -103,6 +103,7 @@ struct JointDef {
 
     // Distance
     float distance        = 0.0f;    // 0 = current distance at creation
+    bool  cable_mode      = false;   // false = rigid rod (two-sided), true = cable (one-sided, pull only)
 
     // Pulley
     Vec2  ground_a        = {0.0f, 0.0f};   // world-space
@@ -149,8 +150,8 @@ struct JointStorage {
     std::vector<float>     accumulated_limit_impulse;  // warm-start
 
     // Hinge/Motor (optional, default disabled)
-    std::vector<uint8_t>   motor_enabled;   // 0 = disabled, 1 = enabled
-    std::vector<float>     motor_target_speed;
+    std::vector<uint8_t>   motor_enabled;        // 0 = disabled, 1 = enabled
+    std::vector<float>     motor_target_speeds;  // plural, consistent with JointStateView span name
     std::vector<float>     motor_max_torque;
     std::vector<float>     accumulated_motor_impulse;  // warm-start
 
@@ -161,6 +162,7 @@ struct JointStorage {
 
     // Distance
     std::vector<float>     distance_length;
+    std::vector<uint8_t>   distance_cable_mode;  // 0 = rigid rod, 1 = cable (one-sided)
 
     // Pulley
     std::vector<Vec2>      pulley_ground_a;
@@ -172,9 +174,17 @@ struct JointStorage {
     std::vector<float>     accumulated_impulse_x;
     std::vector<float>     accumulated_impulse_y;
 
-    // Per-frame observable constraint force magnitude (written each solve, read by JointStateView)
-    // Reset to 0 at the start of each solve() call. Not warm-started.
+    // Per-frame observable constraint force magnitude (written each solve(), read by JointStateView).
+    // Reset to 0 at solve() entry (before prepare_joint_constraints).
+    // Accumulated across all solver iterations within one frame: after each iteration, add |lambda| to
+    // this field. The final value is the total impulse magnitude applied this frame, which approximates
+    // constraint force when divided by dt. Not warm-started; not included in Snapshot.
     std::vector<float>     constraint_forces;
+
+    // Cached per-frame observables for JointStateView (recomputed each step, not snapshotted)
+    std::vector<float>     cached_angles;        // Hinge relative angle, 0 for non-Hinge
+    std::vector<float>     cached_angular_speeds; // Hinge angular speed, 0 for non-Hinge
+    std::vector<float>     cached_lengths;        // anchor-to-anchor distance, all types
 
     uint32_t size = 0;
 };
@@ -231,29 +241,37 @@ World::step(dt)
 
 Contact and joint constraints are solved in the **same iteration loop** for correct interaction (e.g., jointed bodies colliding with each other).
 
+**Task 14 note:** The Phase 1 `World::solve()` has an early-exit guard `if (constraints_.empty()) return;`. This must be removed (or changed to only guard contact warm-start) as part of Task 14, so joint constraints are solved even when there are no contact collisions. Failure to remove this guard causes silent skipping of all joint solving in non-colliding scenes.
+
 ### Per-Type Impulse Strategy
 
 **Hinge:**
-- Linear impulse: eliminate relative velocity at anchor point (2D, x/y)
-- Limit impulse: when `angle < min` or `angle > max`, angular impulse, one-sided clamp (same pattern as contact normal — clamp accumulated impulse, compute delta)
-- Motor impulse: `target_speed - current_speed → angular impulse`. Uses the **clamped-accumulation pattern** from Phase 1 `solve_constraints()`: clamp `accumulated_motor_impulse` to `[-motor_max_torque * dt, +motor_max_torque * dt]`, then `delta = new_accumulated - old_accumulated`, apply delta to both bodies. Two-sided clamp (motor can push or pull).
+- **Linear (point-to-point) impulse:** Uses a coupled 2×2 effective mass matrix `K`:
+  `K = (invMa + invMb)*I₂ - ra_cross² * invIa - rb_cross² * invIb`
+  where `ra_cross²` is the 2×2 outer-product of the skew-symmetric cross-product matrix of `ra`. Solve `K * Δv = -v_constraint` to get the 2D linear impulse. This is the standard Box2D point-constraint formulation; do **not** use two decoupled 1D impulses (causes jitter at high stiffness).
+- **Angle convention:** Relative angle `θ = θ_b - θ_a - reference_angle`, wrapped to `[-π, π]`. `limit_min` and `limit_max` are relative to `reference_angle`. `get_joint_angle()` returns the wrapped relative angle. CCW is positive (consistent with standard 2D math convention).
+- **Limit impulse:** when `θ < limit_min` or `θ > limit_max`, angular impulse, one-sided clamp (same pattern as contact normal — clamp accumulated impulse, compute delta).
+- **Motor impulse:** `target_speed - current_speed → angular impulse`. Uses the **clamped-accumulation pattern** from Phase 1 `solve_constraints()`: clamp `accumulated_motor_impulse` to `[-motor_max_torque * dt, +motor_max_torque * dt]`, then `delta = new_accumulated - old_accumulated`, apply delta to both bodies. Two-sided clamp (motor can push or pull).
 
 **Distance:**
-- Impulse along anchor-to-anchor axis
-- Baumgarte bias for position correction (same `slop` + `baumgarte` as contacts)
-- Configurable one-sided (cable) or two-sided (rigid rod)
+- Impulse along anchor-to-anchor axis (1D scalar constraint).
+- Baumgarte bias for position correction (same `slop` + `baumgarte` as contacts).
+- `JointDef` includes a `bool cable_mode = false` field: `false` = rigid rod (two-sided, impulse clamped at zero when joint is not violated in compression), `true` = cable (one-sided, only pulls — clamp accumulated impulse ≥ 0).
 
 **Spring:**
 - Constraint impulse along the current anchor-to-anchor axis, using effective mass (same computation as Distance joint):
   `lambda = (-stiffness * (len - rest_len) - damping * v_rel_along_axis) * dt / effective_mass`
 - No clamping, no warm-start — soft constraint fully recomputed each frame.
 - **Do not** apply `F * dt` directly as a velocity change; always divide by effective mass to correctly account for the relative inertia of both connected bodies.
+- Spring joints use `accumulated_impulse_x/y` but they are always zeroed — the fields exist for uniform snapshot layout but carry no state.
 
 **Pulley:**
 - Scalar constraint: `len_a + ratio * len_b = constant`
 - Constraint velocity: `v_a_proj + ratio * v_b_proj = 0`
-- Effective mass: scalar including ratio factor
-- Impulse applied along each rope segment direction
+- Effective mass (scalar):
+  `1/k = 1/mA + (rA × uA)² / IA + ratio² * (1/mB + (rB × uB)² / IB)`
+  where `uA` and `uB` are unit vectors along each rope segment, `rA`/`rB` are moment arms from body centres.
+- Impulse applied along each rope segment direction: body A receives `lambda * uA`, body B receives `ratio * lambda * uB`.
 
 ### Determinism Guarantees
 
@@ -271,17 +289,20 @@ Contact and joint constraints are solved in the **same iteration loop** for corr
 ```cpp
 struct JointStateView {
     uint32_t active_joint_count = 0;
-    std::span<const uint8_t> types;              // JointType as uint8
-    std::span<const float>   angles;             // Hinge current angle (0 for non-Hinge)
-    std::span<const float>   angular_speeds;     // Hinge current angular speed (0 for non-Hinge)
-    // Target motor speed for joints with motor_enabled=1.
-    // NaN (std::numeric_limits<float>::quiet_NaN()) for joints without a motor (Spring, Distance, Pulley).
-    // RL agents should check the motor_enabled span to mask correctly.
+    std::span<const uint8_t> types;              // JointType as uint8; backed by JointStorage::types
+    std::span<const float>   angles;             // backed by JointStorage::cached_angles
+                                                 // Hinge: relative angle in [-π, π]; 0 for non-Hinge
+    std::span<const float>   angular_speeds;     // backed by JointStorage::cached_angular_speeds
+                                                 // Hinge: current angular speed; 0 for non-Hinge
+    // Backed by JointStorage::motor_target_speeds.
+    // NaN (std::numeric_limits<float>::quiet_NaN()) for joints where motor_enabled=0 or joint
+    // type has no motor (Spring, Distance, Pulley). RL agents must mask by motor_enabled.
     std::span<const float>   motor_target_speeds;
-    std::span<const uint8_t> motor_enabled;      // mirrors JointStorage::motor_enabled
-    std::span<const float>   constraint_forces;  // backed by JointStorage::constraint_forces,
-                                                 // written each solve(), reset to 0 at frame start
-    std::span<const float>   lengths;            // current anchor-to-anchor distance
+    std::span<const uint8_t> motor_enabled;      // backed by JointStorage::motor_enabled
+    std::span<const float>   constraint_forces;  // backed by JointStorage::constraint_forces;
+                                                 // total impulse magnitude across all iterations this frame
+    std::span<const float>   lengths;            // backed by JointStorage::cached_lengths;
+                                                 // current anchor-to-anchor distance, all types
 };
 
 struct WorldStateView {
