@@ -30,4 +30,12 @@ struct ShapeHandle {
     bool operator!=(const ShapeHandle&) const = default;
 };
 
+struct JointHandle {
+    uint32_t index      = 0;
+    uint32_t generation = 0;
+
+    bool operator==(const JointHandle&) const = default;
+    bool operator!=(const JointHandle&) const = default;
+};
+
 } // namespace stan2d

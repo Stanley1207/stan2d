@@ -12,6 +12,7 @@
 #include <stan2d/core/shapes.hpp>
 #include <stan2d/core/sparse_set.hpp>
 #include <stan2d/dynamics/body_storage.hpp>
+#include <stan2d/joints/joint_storage.hpp>
 #include <stan2d/world/snapshot.hpp>
 #include <stan2d/world/state_view.hpp>
 #include <stan2d/world/world_config.hpp>
@@ -45,6 +46,12 @@ public:
     // ── Body management ───────────────────────────────────────────
     BodyHandle create_body(const BodyDef& def);
     void       destroy_body(BodyHandle handle);
+
+    // ── Joint management ──────────────────────────────────────────
+    JointHandle create_joint(const JointDef& def);
+    void        destroy_joint(JointHandle handle);
+    [[nodiscard]] bool is_valid(JointHandle handle) const;
+    [[nodiscard]] uint32_t joint_count() const;
 
     // ── Queries ───────────────────────────────────────────────────
     [[nodiscard]] bool is_valid(BodyHandle handle) const;
@@ -94,6 +101,10 @@ private:
     Vec2           gravity_{0.0f, 0.0f};
     SolverConfig   solver_config_;
     bool           proxies_built_ = false;
+
+    // ── Joint data ─────────────────────────────────────────────────
+    SparseSet      joint_handles_;
+    JointStorage   joints_;
 
     // ── Pre-allocated pipeline buffers ─────────────────────────────
     AABBTree                       aabb_tree_;

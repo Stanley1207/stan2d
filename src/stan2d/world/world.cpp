@@ -2,6 +2,7 @@
 
 #include <cassert>
 
+#include <glm/glm.hpp>
 #include <stan2d/collision/narrow_phase.hpp>
 #include <stan2d/constraints/solver.hpp>
 #include <stan2d/dynamics/integrator.hpp>
@@ -14,6 +15,8 @@ World::World(const WorldConfig& config)
     body_handles_.reserve(config.max_bodies);
     bodies_.reserve(config.max_bodies);
     shape_registry_.reserve(config.max_shapes);
+    joint_handles_.reserve(config.max_joints);
+    joints_.reserve(config.max_joints);
 
     // Pre-allocate pipeline buffers
     body_proxies_.reserve(config.max_bodies);
@@ -253,6 +256,68 @@ void World::step(float dt) {
 
     // Stage 6: Integrate positions
     integrate_positions(bodies_, count, dt);
+}
+
+// ── Joint management ─────────────────────────────────────────────
+
+JointHandle World::create_joint(const JointDef& def) {
+    Handle ha{def.body_a.index, def.body_a.generation};
+    Handle hb{def.body_b.index, def.body_b.generation};
+    assert(body_handles_.is_valid(ha) && "body_a is not valid");
+    assert(body_handles_.is_valid(hb) && "body_b is not valid");
+
+    uint32_t dense_a = body_handles_.dense_index(ha);
+    uint32_t dense_b = body_handles_.dense_index(hb);
+
+    // Compute reference angle for Hinge joints
+    float ref_angle = 0.0f;
+    if (def.type == JointType::Hinge) {
+        ref_angle = bodies_.rotations[dense_b] - bodies_.rotations[dense_a];
+    }
+
+    // Auto-detect distances / rest lengths
+    JointDef resolved = def;
+    Vec2 world_anchor_a = bodies_.positions[dense_a] + def.anchor_a;
+    Vec2 world_anchor_b = bodies_.positions[dense_b] + def.anchor_b;
+    float current_dist = glm::length(world_anchor_b - world_anchor_a);
+
+    if (def.type == JointType::Distance && def.distance == 0.0f) {
+        resolved.distance = current_dist;
+    }
+    if (def.type == JointType::Spring && def.rest_length == 0.0f) {
+        resolved.rest_length = current_dist;
+    }
+
+    // Compute pulley constant (len_a + ratio * len_b at creation)
+    float pulley_const = 0.0f;
+    if (def.type == JointType::Pulley) {
+        float len_a = glm::length(world_anchor_a - def.ground_a);
+        float len_b = glm::length(world_anchor_b - def.ground_b);
+        pulley_const = len_a + def.pulley_ratio * len_b;
+    }
+
+    Handle h = joint_handles_.allocate();
+    joints_.push_back(resolved, dense_a, dense_b, ref_angle, pulley_const);
+
+    return JointHandle{h.index, h.generation};
+}
+
+void World::destroy_joint(JointHandle handle) {
+    Handle h{handle.index, handle.generation};
+    auto swap = joint_handles_.deallocate(h);
+
+    if (swap.has_value()) {
+        joints_.swap_and_pop(swap->removed_dense, swap->moved_from_dense);
+    }
+    joints_.pop_back();
+}
+
+bool World::is_valid(JointHandle handle) const {
+    return joint_handles_.is_valid(Handle{handle.index, handle.generation});
+}
+
+uint32_t World::joint_count() const {
+    return joint_handles_.size();
 }
 
 uint32_t World::dense_index(BodyHandle handle) const {
