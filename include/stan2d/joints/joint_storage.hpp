@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 #include <stan2d/core/math_types.hpp>
@@ -108,7 +109,10 @@ struct JointStorage {
         accumulated_limit_impulse.push_back(0.0f);
 
         motor_enabled.push_back(def.motor_enabled ? 1u : 0u);
-        motor_target_speeds.push_back(def.motor_speed);
+        // NaN sentinel for non-motor joints — RL agents must mask by motor_enabled
+        motor_target_speeds.push_back(
+            def.motor_enabled ? def.motor_speed
+                              : std::numeric_limits<float>::quiet_NaN());
         motor_max_torque.push_back(def.motor_torque);
         accumulated_motor_impulse.push_back(0.0f);
 

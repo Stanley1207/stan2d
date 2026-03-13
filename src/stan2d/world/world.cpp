@@ -145,6 +145,27 @@ WorldStateView World::get_state_view() const {
     view.rotations          = std::span<const float>(bodies_.rotations.data(), count);
     view.angular_velocities = std::span<const float>(bodies_.angular_velocities.data(), count);
     view.masses             = std::span<const float>(bodies_.masses.data(), count);
+
+    // Joint state view
+    uint32_t jcount = joints_.size;
+    view.joints.active_joint_count = jcount;
+    if (jcount > 0) {
+        view.joints.types = std::span<const uint8_t>(
+            reinterpret_cast<const uint8_t*>(joints_.types.data()), jcount);
+        view.joints.angles = std::span<const float>(
+            joints_.cached_angles.data(), jcount);
+        view.joints.angular_speeds = std::span<const float>(
+            joints_.cached_angular_speeds.data(), jcount);
+        view.joints.motor_target_speeds = std::span<const float>(
+            joints_.motor_target_speeds.data(), jcount);
+        view.joints.motor_enabled = std::span<const uint8_t>(
+            joints_.motor_enabled.data(), jcount);
+        view.joints.constraint_forces = std::span<const float>(
+            joints_.constraint_forces.data(), jcount);
+        view.joints.lengths = std::span<const float>(
+            joints_.cached_lengths.data(), jcount);
+    }
+
     return view;
 }
 
@@ -189,6 +210,71 @@ void World::save_state(WorldSnapshot& out) const {
                                out.shape_dense_to_sparse,
                                out.shape_generations,
                                out.shape_free_list);
+
+    // Save joint state
+    uint32_t jcount = joints_.size;
+    out.joints.count = jcount;
+
+    joint_handles_.save_state(out.joints.sparse,
+                              out.joints.dense_to_sparse,
+                              out.joints.generations,
+                              out.joints.free_list);
+
+    out.joints.types.assign(joints_.types.begin(), joints_.types.begin() + jcount);
+    out.joints.body_a.assign(joints_.body_a.begin(), joints_.body_a.begin() + jcount);
+    out.joints.body_b.assign(joints_.body_b.begin(), joints_.body_b.begin() + jcount);
+    out.joints.anchor_a.assign(joints_.anchor_a.begin(), joints_.anchor_a.begin() + jcount);
+    out.joints.anchor_b.assign(joints_.anchor_b.begin(), joints_.anchor_b.begin() + jcount);
+
+    out.joints.limit_enabled.assign(
+        joints_.limit_enabled.begin(), joints_.limit_enabled.begin() + jcount);
+    out.joints.limit_min.assign(
+        joints_.limit_min.begin(), joints_.limit_min.begin() + jcount);
+    out.joints.limit_max.assign(
+        joints_.limit_max.begin(), joints_.limit_max.begin() + jcount);
+    out.joints.reference_angle.assign(
+        joints_.reference_angle.begin(), joints_.reference_angle.begin() + jcount);
+    out.joints.accumulated_limit_impulse.assign(
+        joints_.accumulated_limit_impulse.begin(),
+        joints_.accumulated_limit_impulse.begin() + jcount);
+
+    out.joints.motor_enabled.assign(
+        joints_.motor_enabled.begin(), joints_.motor_enabled.begin() + jcount);
+    out.joints.motor_target_speeds.assign(
+        joints_.motor_target_speeds.begin(), joints_.motor_target_speeds.begin() + jcount);
+    out.joints.motor_max_torque.assign(
+        joints_.motor_max_torque.begin(), joints_.motor_max_torque.begin() + jcount);
+    out.joints.accumulated_motor_impulse.assign(
+        joints_.accumulated_motor_impulse.begin(),
+        joints_.accumulated_motor_impulse.begin() + jcount);
+
+    out.joints.spring_stiffness.assign(
+        joints_.spring_stiffness.begin(), joints_.spring_stiffness.begin() + jcount);
+    out.joints.spring_damping.assign(
+        joints_.spring_damping.begin(), joints_.spring_damping.begin() + jcount);
+    out.joints.spring_rest_length.assign(
+        joints_.spring_rest_length.begin(), joints_.spring_rest_length.begin() + jcount);
+
+    out.joints.distance_length.assign(
+        joints_.distance_length.begin(), joints_.distance_length.begin() + jcount);
+    out.joints.distance_cable_mode.assign(
+        joints_.distance_cable_mode.begin(), joints_.distance_cable_mode.begin() + jcount);
+
+    out.joints.pulley_ground_a.assign(
+        joints_.pulley_ground_a.begin(), joints_.pulley_ground_a.begin() + jcount);
+    out.joints.pulley_ground_b.assign(
+        joints_.pulley_ground_b.begin(), joints_.pulley_ground_b.begin() + jcount);
+    out.joints.pulley_ratio.assign(
+        joints_.pulley_ratio.begin(), joints_.pulley_ratio.begin() + jcount);
+    out.joints.pulley_constant.assign(
+        joints_.pulley_constant.begin(), joints_.pulley_constant.begin() + jcount);
+
+    out.joints.accumulated_impulse_x.assign(
+        joints_.accumulated_impulse_x.begin(),
+        joints_.accumulated_impulse_x.begin() + jcount);
+    out.joints.accumulated_impulse_y.assign(
+        joints_.accumulated_impulse_y.begin(),
+        joints_.accumulated_impulse_y.begin() + jcount);
 }
 
 void World::restore_state(const WorldSnapshot& snapshot) {
@@ -230,6 +316,77 @@ void World::restore_state(const WorldSnapshot& snapshot) {
                                   snapshot.shape_dense_to_sparse,
                                   snapshot.shape_generations,
                                   snapshot.shape_free_list);
+
+    // Restore joint state
+    uint32_t jcount = snapshot.joints.count;
+    joints_.size = jcount;
+
+    joint_handles_.restore_state(snapshot.joints.sparse,
+                                 snapshot.joints.dense_to_sparse,
+                                 snapshot.joints.generations,
+                                 snapshot.joints.free_list);
+
+    joints_.types.assign(snapshot.joints.types.begin(), snapshot.joints.types.end());
+    joints_.body_a.assign(snapshot.joints.body_a.begin(), snapshot.joints.body_a.end());
+    joints_.body_b.assign(snapshot.joints.body_b.begin(), snapshot.joints.body_b.end());
+    joints_.anchor_a.assign(snapshot.joints.anchor_a.begin(), snapshot.joints.anchor_a.end());
+    joints_.anchor_b.assign(snapshot.joints.anchor_b.begin(), snapshot.joints.anchor_b.end());
+
+    joints_.limit_enabled.assign(
+        snapshot.joints.limit_enabled.begin(), snapshot.joints.limit_enabled.end());
+    joints_.limit_min.assign(
+        snapshot.joints.limit_min.begin(), snapshot.joints.limit_min.end());
+    joints_.limit_max.assign(
+        snapshot.joints.limit_max.begin(), snapshot.joints.limit_max.end());
+    joints_.reference_angle.assign(
+        snapshot.joints.reference_angle.begin(), snapshot.joints.reference_angle.end());
+    joints_.accumulated_limit_impulse.assign(
+        snapshot.joints.accumulated_limit_impulse.begin(),
+        snapshot.joints.accumulated_limit_impulse.end());
+
+    joints_.motor_enabled.assign(
+        snapshot.joints.motor_enabled.begin(), snapshot.joints.motor_enabled.end());
+    joints_.motor_target_speeds.assign(
+        snapshot.joints.motor_target_speeds.begin(), snapshot.joints.motor_target_speeds.end());
+    joints_.motor_max_torque.assign(
+        snapshot.joints.motor_max_torque.begin(), snapshot.joints.motor_max_torque.end());
+    joints_.accumulated_motor_impulse.assign(
+        snapshot.joints.accumulated_motor_impulse.begin(),
+        snapshot.joints.accumulated_motor_impulse.end());
+
+    joints_.spring_stiffness.assign(
+        snapshot.joints.spring_stiffness.begin(), snapshot.joints.spring_stiffness.end());
+    joints_.spring_damping.assign(
+        snapshot.joints.spring_damping.begin(), snapshot.joints.spring_damping.end());
+    joints_.spring_rest_length.assign(
+        snapshot.joints.spring_rest_length.begin(), snapshot.joints.spring_rest_length.end());
+
+    joints_.distance_length.assign(
+        snapshot.joints.distance_length.begin(), snapshot.joints.distance_length.end());
+    joints_.distance_cable_mode.assign(
+        snapshot.joints.distance_cable_mode.begin(), snapshot.joints.distance_cable_mode.end());
+
+    joints_.pulley_ground_a.assign(
+        snapshot.joints.pulley_ground_a.begin(), snapshot.joints.pulley_ground_a.end());
+    joints_.pulley_ground_b.assign(
+        snapshot.joints.pulley_ground_b.begin(), snapshot.joints.pulley_ground_b.end());
+    joints_.pulley_ratio.assign(
+        snapshot.joints.pulley_ratio.begin(), snapshot.joints.pulley_ratio.end());
+    joints_.pulley_constant.assign(
+        snapshot.joints.pulley_constant.begin(), snapshot.joints.pulley_constant.end());
+
+    joints_.accumulated_impulse_x.assign(
+        snapshot.joints.accumulated_impulse_x.begin(),
+        snapshot.joints.accumulated_impulse_x.end());
+    joints_.accumulated_impulse_y.assign(
+        snapshot.joints.accumulated_impulse_y.begin(),
+        snapshot.joints.accumulated_impulse_y.end());
+
+    // Reset cached observables (not snapshotted, recomputed each step)
+    joints_.constraint_forces.assign(jcount, 0.0f);
+    joints_.cached_angles.assign(jcount, 0.0f);
+    joints_.cached_angular_speeds.assign(jcount, 0.0f);
+    joints_.cached_lengths.assign(jcount, 0.0f);
 
     // Force proxy rebuild on next step
     proxies_built_ = false;
