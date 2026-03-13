@@ -25,7 +25,10 @@
       "Bash(cmake --preset default 2>&1 | tail -5 && cmake --build build 2>&1)",
       "Bash(./build/stan2d_tests --gtest_filter=\"HingeJointFixture.*\" 2>&1)",
       "Bash(cmake --build build 2>&1 | tail -3 && ./build/stan2d_tests --gtest_filter=\"HingeJointFixture.*\" 2>&1)",
-      "Bash(./build/stan2d_tests --gtest_filter=HingeJoint* 2>&1)"
+      "Bash(./build/stan2d_tests --gtest_filter=HingeJoint* 2>&1)",
+      "Bash(cmake --preset default 2>&1 | tail -5 && cmake --build build 2>&1 | tail -5 && ./build/stan2d_tests \"--gtest_filter=DistanceJointFixture.*\" 2>&1)",
+      "Bash(cmake --preset default 2>&1 | tail -3 && cmake --build build 2>&1 | tail -5 && ./build/stan2d_tests \"--gtest_filter=SpringJointFixture.*\" 2>&1)",
+      "Bash(cmake --preset default 2>&1 | tail -3 && cmake --build build 2>&1 | tail -5 && ./build/stan2d_tests \"--gtest_filter=PulleyJointFixture.*\" 2>&1)"
     ]
   }
 }
