@@ -24,6 +24,25 @@ void export_state(const World& world, const std::string& path, ExportFormat fmt)
             j["bodies"].push_back(body);
         }
 
+        // Joint data
+        j["joint_count"] = view.joints.active_joint_count;
+        j["joints"] = nlohmann::json::array();
+
+        const char* type_names[] = {"Hinge", "Spring", "Distance", "Pulley"};
+
+        for (uint32_t i = 0; i < view.joints.active_joint_count; ++i) {
+            nlohmann::json joint;
+            uint8_t type_val = view.joints.types[i];
+            joint["type"] = (type_val < 4) ? type_names[type_val] : "Unknown";
+            joint["angle"] = view.joints.angles[i];
+            joint["angular_speed"] = view.joints.angular_speeds[i];
+            joint["motor_enabled"] = view.joints.motor_enabled[i] != 0;
+            joint["motor_target_speed"] = view.joints.motor_target_speeds[i];
+            joint["constraint_force"] = view.joints.constraint_forces[i];
+            joint["length"] = view.joints.lengths[i];
+            j["joints"].push_back(joint);
+        }
+
         std::ofstream file(path);
         file << j.dump(2);
 
@@ -32,7 +51,7 @@ void export_state(const World& world, const std::string& path, ExportFormat fmt)
         std::ofstream file(path, std::ios::binary);
 
         uint32_t magic = 0x53324450;  // "S2DP" (Physics state)
-        uint32_t version = 1;
+        uint32_t version = 2;         // v2 adds joint data
         uint32_t count = view.active_body_count;
 
         file.write(reinterpret_cast<const char*>(&magic), sizeof(magic));
@@ -50,6 +69,22 @@ void export_state(const World& world, const std::string& path, ExportFormat fmt)
                    count * sizeof(float));
         file.write(reinterpret_cast<const char*>(view.masses.data()),
                    count * sizeof(float));
+
+        // Joint count + joint observable data
+        uint32_t jcount = view.joints.active_joint_count;
+        file.write(reinterpret_cast<const char*>(&jcount), sizeof(jcount));
+        if (jcount > 0) {
+            file.write(reinterpret_cast<const char*>(view.joints.types.data()),
+                       jcount * sizeof(uint8_t));
+            file.write(reinterpret_cast<const char*>(view.joints.angles.data()),
+                       jcount * sizeof(float));
+            file.write(reinterpret_cast<const char*>(view.joints.angular_speeds.data()),
+                       jcount * sizeof(float));
+            file.write(reinterpret_cast<const char*>(view.joints.constraint_forces.data()),
+                       jcount * sizeof(float));
+            file.write(reinterpret_cast<const char*>(view.joints.lengths.data()),
+                       jcount * sizeof(float));
+        }
     }
 }
 

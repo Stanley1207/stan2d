@@ -118,7 +118,7 @@ TEST_F(ExportFixture, BinaryRoundTrip) {
     file.read(reinterpret_cast<char*>(&body_count), sizeof(body_count));
 
     EXPECT_EQ(magic, 0x53324450u);  // "S2DP"
-    EXPECT_EQ(version, 1u);
+    EXPECT_EQ(version, 2u);
     EXPECT_EQ(body_count, 1u);
 
     // Read position
