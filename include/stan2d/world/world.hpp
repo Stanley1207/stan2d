@@ -53,6 +53,15 @@ public:
     [[nodiscard]] bool is_valid(JointHandle handle) const;
     [[nodiscard]] uint32_t joint_count() const;
 
+    // ── Joint queries ─────────────────────────────────────────────
+    [[nodiscard]] float get_joint_angle(JointHandle handle) const;   // Hinge
+    [[nodiscard]] float get_joint_speed(JointHandle handle) const;   // Hinge
+    [[nodiscard]] float get_joint_length(JointHandle handle) const;  // Distance/Spring
+
+    // ── Motor control (RL agent interface) ────────────────────────
+    void set_motor_speed(JointHandle handle, float speed);
+    void set_motor_torque(JointHandle handle, float max_torque);
+
     // ── Queries ───────────────────────────────────────────────────
     [[nodiscard]] bool is_valid(BodyHandle handle) const;
     [[nodiscard]] Vec2  get_position(BodyHandle handle) const;
@@ -105,6 +114,7 @@ private:
     // ── Joint data ─────────────────────────────────────────────────
     SparseSet      joint_handles_;
     JointStorage   joints_;
+    float          current_dt_ = 0.0f;
 
     // ── Pre-allocated pipeline buffers ─────────────────────────────
     AABBTree                       aabb_tree_;

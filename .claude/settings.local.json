@@ -21,7 +21,11 @@
       "Bash(./build/stan2d_tests --gtest_filter='TrajectoryRecorder.*:ExportFixture.*' 2>&1)",
       "Bash(git add:*)",
       "Bash(cmake --preset default 2>&1 && cmake --build build 2>&1)",
-      "Bash(./build/stan2d_tests --gtest_filter=\"JointHandle.*:JointType.*:JointDef.*:JointStorage.*:WorldConfig.MaxJointsDefaultValue:JointWorldFixture.*\" 2>&1)"
+      "Bash(./build/stan2d_tests --gtest_filter=\"JointHandle.*:JointType.*:JointDef.*:JointStorage.*:WorldConfig.MaxJointsDefaultValue:JointWorldFixture.*\" 2>&1)",
+      "Bash(cmake --preset default 2>&1 | tail -5 && cmake --build build 2>&1)",
+      "Bash(./build/stan2d_tests --gtest_filter=\"HingeJointFixture.*\" 2>&1)",
+      "Bash(cmake --build build 2>&1 | tail -3 && ./build/stan2d_tests --gtest_filter=\"HingeJointFixture.*\" 2>&1)",
+      "Bash(./build/stan2d_tests --gtest_filter=HingeJoint* 2>&1)"
     ]
   }
 }

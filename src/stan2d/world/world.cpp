@@ -6,6 +6,7 @@
 #include <stan2d/collision/narrow_phase.hpp>
 #include <stan2d/constraints/solver.hpp>
 #include <stan2d/dynamics/integrator.hpp>
+#include <stan2d/joints/joint_solver.hpp>
 
 namespace stan2d {
 
@@ -242,6 +243,8 @@ void World::step(float dt) {
     uint32_t count = bodies_.size();
     if (count == 0) return;
 
+    current_dt_ = dt;
+
     // Stage 1 & 2: Apply forces (gravity) + Integrate velocities
     integrate_velocities(bodies_, count, gravity_, dt);
 
@@ -318,6 +321,31 @@ bool World::is_valid(JointHandle handle) const {
 
 uint32_t World::joint_count() const {
     return joint_handles_.size();
+}
+
+float World::get_joint_angle(JointHandle handle) const {
+    uint32_t idx = joint_handles_.dense_index(Handle{handle.index, handle.generation});
+    return joints_.cached_angles[idx];
+}
+
+float World::get_joint_speed(JointHandle handle) const {
+    uint32_t idx = joint_handles_.dense_index(Handle{handle.index, handle.generation});
+    return joints_.cached_angular_speeds[idx];
+}
+
+float World::get_joint_length(JointHandle handle) const {
+    uint32_t idx = joint_handles_.dense_index(Handle{handle.index, handle.generation});
+    return joints_.cached_lengths[idx];
+}
+
+void World::set_motor_speed(JointHandle handle, float speed) {
+    uint32_t idx = joint_handles_.dense_index(Handle{handle.index, handle.generation});
+    joints_.motor_target_speeds[idx] = speed;
+}
+
+void World::set_motor_torque(JointHandle handle, float max_torque) {
+    uint32_t idx = joint_handles_.dense_index(Handle{handle.index, handle.generation});
+    joints_.motor_max_torque[idx] = max_torque;
 }
 
 uint32_t World::dense_index(BodyHandle handle) const {
@@ -409,8 +437,8 @@ void World::narrow_phase() {
 }
 
 void World::solve() {
+    // Prepare contact constraints
     constraints_.clear();
-
     for (const auto& entry : manifold_entries_) {
         prepare_contact_constraints(
             entry.manifold, entry.dense_a, entry.dense_b,
@@ -418,10 +446,82 @@ void World::solve() {
         );
     }
 
-    if (constraints_.empty()) return;
+    // Prepare joint constraints (caches observables, resets constraint_forces)
+    prepare_joint_constraints(joints_, bodies_, current_dt_);
 
-    warm_start(constraints_, bodies_);
-    solve_constraints(constraints_, bodies_, solver_config_);
+    bool has_contacts = !constraints_.empty();
+    bool has_joints   = joints_.size > 0;
+
+    if (!has_contacts && !has_joints) return;
+
+    // Warm start
+    if (has_contacts) {
+        warm_start(constraints_, bodies_);
+    }
+    if (has_joints) {
+        warm_start_joints(joints_, bodies_);
+    }
+
+    // Unified iteration loop: contacts + joints solved together
+    for (uint32_t iter = 0; iter < solver_config_.iterations; ++iter) {
+        // Solve contacts (one iteration, inlined)
+        for (auto& c : constraints_) {
+            Vec2 ra = c.contact_point - bodies_.positions[c.body_a];
+            Vec2 rb = c.contact_point - bodies_.positions[c.body_b];
+
+            Vec2 rel_vel = (bodies_.velocities[c.body_b]
+                           + cross_scalar_vec(bodies_.angular_velocities[c.body_b], rb))
+                          - (bodies_.velocities[c.body_a]
+                           + cross_scalar_vec(bodies_.angular_velocities[c.body_a], ra));
+
+            float vn = glm::dot(rel_vel, c.normal);
+            float bias = solver_config_.baumgarte
+                       * glm::max(c.penetration - solver_config_.slop, 0.0f);
+            float lambda_n = c.normal_mass * (-vn + bias);
+            float new_impulse_n = glm::max(c.accumulated_normal_impulse + lambda_n, 0.0f);
+            lambda_n = new_impulse_n - c.accumulated_normal_impulse;
+            c.accumulated_normal_impulse = new_impulse_n;
+
+            Vec2 impulse_n = c.normal * lambda_n;
+            bodies_.velocities[c.body_a]         = bodies_.velocities[c.body_a]
+                                                  - impulse_n * bodies_.inverse_masses[c.body_a];
+            bodies_.angular_velocities[c.body_a] -= bodies_.inverse_inertias[c.body_a]
+                                                  * cross_vec_vec(ra, impulse_n);
+            bodies_.velocities[c.body_b]         = bodies_.velocities[c.body_b]
+                                                  + impulse_n * bodies_.inverse_masses[c.body_b];
+            bodies_.angular_velocities[c.body_b] += bodies_.inverse_inertias[c.body_b]
+                                                  * cross_vec_vec(rb, impulse_n);
+
+            // Recompute rel_vel after normal impulse for tangent
+            rel_vel = (bodies_.velocities[c.body_b]
+                      + cross_scalar_vec(bodies_.angular_velocities[c.body_b], rb))
+                     - (bodies_.velocities[c.body_a]
+                      + cross_scalar_vec(bodies_.angular_velocities[c.body_a], ra));
+
+            float vt = glm::dot(rel_vel, c.tangent);
+            float lambda_t = c.tangent_mass * (-vt);
+            float max_friction = solver_config_.friction * c.accumulated_normal_impulse;
+            float new_tangent = glm::clamp(
+                c.accumulated_tangent_impulse + lambda_t, -max_friction, max_friction);
+            lambda_t = new_tangent - c.accumulated_tangent_impulse;
+            c.accumulated_tangent_impulse = new_tangent;
+
+            Vec2 impulse_t = c.tangent * lambda_t;
+            bodies_.velocities[c.body_a]         = bodies_.velocities[c.body_a]
+                                                  - impulse_t * bodies_.inverse_masses[c.body_a];
+            bodies_.angular_velocities[c.body_a] -= bodies_.inverse_inertias[c.body_a]
+                                                  * cross_vec_vec(ra, impulse_t);
+            bodies_.velocities[c.body_b]         = bodies_.velocities[c.body_b]
+                                                  + impulse_t * bodies_.inverse_masses[c.body_b];
+            bodies_.angular_velocities[c.body_b] += bodies_.inverse_inertias[c.body_b]
+                                                  * cross_vec_vec(rb, impulse_t);
+        }
+
+        // Solve joints (one iteration)
+        if (has_joints) {
+            solve_joints(joints_, bodies_, solver_config_, current_dt_);
+        }
+    }
 }
 
 } // namespace stan2d
